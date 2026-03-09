@@ -1,0 +1,89 @@
+package httpx
+
+import (
+	"net/http"
+	"strings"
+)
+
+type ErrorHandlerFunc func(http.ResponseWriter, *http.Request) error
+
+type Middleware func(h ErrorHandlerFunc) ErrorHandlerFunc
+
+type router struct {
+	mux         *http.ServeMux
+	errHandler  func(h ErrorHandlerFunc) http.HandlerFunc
+	basePath    string
+	middlewares []Middleware
+}
+
+func NewRouter(errHandler func(h ErrorHandlerFunc) http.HandlerFunc, middlewares ...Middleware) *router {
+	mux := http.NewServeMux()
+
+	return &router{
+		mux:         mux,
+		errHandler:  errHandler,
+		basePath:    "",
+		middlewares: middlewares,
+	}
+}
+
+func (r *router) NewGroup(basePath string, middlewares ...Middleware) *router {
+	return &router{
+		mux:         r.mux,
+		errHandler:  r.errHandler,
+		basePath:    r.basePath + basePath,
+		middlewares: append(r.middlewares, middlewares...),
+	}
+}
+
+func (r *router) GET(route string, h ErrorHandlerFunc) {
+	for i := len(r.middlewares) - 1; i >= 0; i-- {
+		h = r.middlewares[i](h)
+	}
+
+	r.mux.HandleFunc("GET "+normalizeRoute(r.basePath+route), r.errHandler(h))
+}
+
+func (r *router) POST(route string, h ErrorHandlerFunc) {
+	for i := len(r.middlewares) - 1; i >= 0; i-- {
+		h = r.middlewares[i](h)
+	}
+
+	r.mux.HandleFunc("POST "+normalizeRoute(r.basePath+route), r.errHandler(h))
+}
+
+func (r *router) PUT(route string, h ErrorHandlerFunc) {
+	for i := len(r.middlewares) - 1; i >= 0; i-- {
+		h = r.middlewares[i](h)
+	}
+
+	r.mux.HandleFunc("PUT "+normalizeRoute(r.basePath+route), r.errHandler(h))
+}
+
+func (r *router) DELETE(route string, h ErrorHandlerFunc) {
+	for i := len(r.middlewares) - 1; i >= 0; i-- {
+		h = r.middlewares[i](h)
+	}
+
+	r.mux.HandleFunc("DELETE "+normalizeRoute(r.basePath+route), r.errHandler(h))
+}
+
+func (r *router) PATCH(route string, h ErrorHandlerFunc) {
+	for i := len(r.middlewares) - 1; i >= 0; i-- {
+		h = r.middlewares[i](h)
+	}
+
+	r.mux.HandleFunc("PATCH "+normalizeRoute(r.basePath+route), r.errHandler(h))
+}
+
+func (r *router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	r.mux.ServeHTTP(w, req)
+}
+
+func normalizeRoute(route string) string {
+	if route == "/" {
+		return route + "{$}"
+	}
+
+	return strings.TrimSuffix(route, "/")
+}
