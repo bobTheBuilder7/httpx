@@ -27,7 +27,13 @@ func NewRouter(errHandler func(h ErrorHandlerFunc) http.HandlerFunc, middlewares
 	}
 }
 
+var _ http.Handler = (*router)(nil)
+
 func (r *router) NewGroup(basePath string, middlewares ...Middleware) *router {
+	if basePath == "" {
+		panic("httpx: basePath must not be empty")
+	}
+
 	return &router{
 		mux:         r.mux,
 		errHandler:  r.errHandler,
