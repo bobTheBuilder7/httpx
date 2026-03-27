@@ -393,6 +393,300 @@ func TestMiddlewareSliceIsolation(t *testing.T) {
 	})
 }
 
+func TestMiddlewareSliceIsolationDeep(t *testing.T) {
+	// Tree structure:
+	//   root [A]
+	//   ├── g1 [G1]
+	//   │   ├── g1a [G1A]
+	//   │   └── g1b [G1B]
+	//   ├── g2 [G2]
+	//   └── g3 [G3]
+	//
+	// If append shares backing arrays, creating g1a could corrupt g1b,
+	// or creating g2 could corrupt g1's slice, etc.
+
+	r := NewRouter(testErrHandler, makeTrackingMiddleware("A"))
+
+	g1 := r.NewGroup("/g1", makeTrackingMiddleware("G1"))
+	g1a := g1.NewGroup("/a", makeTrackingMiddleware("G1A"))
+	g1b := g1.NewGroup("/b", makeTrackingMiddleware("G1B"))
+
+	g2 := r.NewGroup("/g2", makeTrackingMiddleware("G2"))
+	g3 := r.NewGroup("/g3", makeTrackingMiddleware("G3"))
+
+	g1.GET("/test", makeTrackingHandler())
+	g1a.GET("/test", makeTrackingHandler())
+	g1b.GET("/test", makeTrackingHandler())
+	g2.GET("/test", makeTrackingHandler())
+	g3.GET("/test", makeTrackingHandler())
+
+	t.Run("g1_has_A_G1", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/g1/test", nil)
+		r.ServeHTTP(rec, req)
+
+		assert.Equal(t, rec.Body.String(), "A:before\nG1:before\nhandler\nG1:after\nA:after\n")
+	})
+
+	t.Run("g1a_has_A_G1_G1A", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/g1/a/test", nil)
+		r.ServeHTTP(rec, req)
+
+		assert.Equal(t, rec.Body.String(), "A:before\nG1:before\nG1A:before\nhandler\nG1A:after\nG1:after\nA:after\n")
+	})
+
+	t.Run("g1b_has_A_G1_G1B", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/g1/b/test", nil)
+		r.ServeHTTP(rec, req)
+
+		assert.Equal(t, rec.Body.String(), "A:before\nG1:before\nG1B:before\nhandler\nG1B:after\nG1:after\nA:after\n")
+	})
+
+	t.Run("g2_has_A_G2", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/g2/test", nil)
+		r.ServeHTTP(rec, req)
+
+		assert.Equal(t, rec.Body.String(), "A:before\nG2:before\nhandler\nG2:after\nA:after\n")
+	})
+
+	t.Run("g3_has_A_G3", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/g3/test", nil)
+		r.ServeHTTP(rec, req)
+
+		assert.Equal(t, rec.Body.String(), "A:before\nG3:before\nhandler\nG3:after\nA:after\n")
+	})
+}
+
+func TestMiddlewareSliceIsolationFiveDeep(t *testing.T) {
+	// 5 levels deep with siblings at each level:
+	//   root [R]
+	//   ├── a1 [A1]
+	//   │   ├── b1 [B1]
+	//   │   │   ├── c1 [C1]
+	//   │   │   │   ├── d1 [D1]
+	//   │   │   │   │   └── e1 [E1]  → R,A1,B1,C1,D1,E1
+	//   │   │   │   │   └── e2 [E2]  → R,A1,B1,C1,D1,E2
+	//   │   │   │   └── d2 [D2]      → R,A1,B1,C1,D2
+	//   │   │   └── c2 [C2]          → R,A1,B1,C2
+	//   │   └── b2 [B2]              → R,A1,B2
+	//   └── a2 [A2]                  → R,A2
+
+	r := NewRouter(testErrHandler, makeTrackingMiddleware("R"))
+
+	a1 := r.NewGroup("/a1", makeTrackingMiddleware("A1"))
+	a2 := r.NewGroup("/a2", makeTrackingMiddleware("A2"))
+
+	b1 := a1.NewGroup("/b1", makeTrackingMiddleware("B1"))
+	b2 := a1.NewGroup("/b2", makeTrackingMiddleware("B2"))
+
+	c1 := b1.NewGroup("/c1", makeTrackingMiddleware("C1"))
+	c2 := b1.NewGroup("/c2", makeTrackingMiddleware("C2"))
+
+	d1 := c1.NewGroup("/d1", makeTrackingMiddleware("D1"))
+	d2 := c1.NewGroup("/d2", makeTrackingMiddleware("D2"))
+
+	e1 := d1.NewGroup("/e1", makeTrackingMiddleware("E1"))
+	e2 := d1.NewGroup("/e2", makeTrackingMiddleware("E2"))
+
+	e1.GET("/test", makeTrackingHandler())
+	e2.GET("/test", makeTrackingHandler())
+	d2.GET("/test", makeTrackingHandler())
+	c2.GET("/test", makeTrackingHandler())
+	b2.GET("/test", makeTrackingHandler())
+	a2.GET("/test", makeTrackingHandler())
+
+	chain := func(labels ...string) string {
+		var s string
+		for _, l := range labels {
+			s += l + ":before\n"
+		}
+		s += "handler\n"
+		for i := len(labels) - 1; i >= 0; i-- {
+			s += labels[i] + ":after\n"
+		}
+		return s
+	}
+
+	t.Run("e1_full_chain", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/a1/b1/c1/d1/e1/test", nil)
+		r.ServeHTTP(rec, req)
+
+		assert.Equal(t, rec.Body.String(), chain("R", "A1", "B1", "C1", "D1", "E1"))
+	})
+
+	t.Run("e2_sibling_at_level_5", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/a1/b1/c1/d1/e2/test", nil)
+		r.ServeHTTP(rec, req)
+
+		assert.Equal(t, rec.Body.String(), chain("R", "A1", "B1", "C1", "D1", "E2"))
+	})
+
+	t.Run("d2_sibling_at_level_4", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/a1/b1/c1/d2/test", nil)
+		r.ServeHTTP(rec, req)
+
+		assert.Equal(t, rec.Body.String(), chain("R", "A1", "B1", "C1", "D2"))
+	})
+
+	t.Run("c2_sibling_at_level_3", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/a1/b1/c2/test", nil)
+		r.ServeHTTP(rec, req)
+
+		assert.Equal(t, rec.Body.String(), chain("R", "A1", "B1", "C2"))
+	})
+
+	t.Run("b2_sibling_at_level_2", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/a1/b2/test", nil)
+		r.ServeHTTP(rec, req)
+
+		assert.Equal(t, rec.Body.String(), chain("R", "A1", "B2"))
+	})
+
+	t.Run("a2_sibling_at_level_1", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/a2/test", nil)
+		r.ServeHTTP(rec, req)
+
+		assert.Equal(t, rec.Body.String(), chain("R", "A2"))
+	})
+}
+
+func TestMiddlewareSliceIsolationSevenDeep(t *testing.T) {
+	// 7 levels deep with siblings at every level:
+	//   root [R]
+	//   ├── a1 [A1]
+	//   │   ├── b1 [B1]
+	//   │   │   ├── c1 [C1]
+	//   │   │   │   ├── d1 [D1]
+	//   │   │   │   │   ├── e1 [E1]
+	//   │   │   │   │   │   ├── f1 [F1]
+	//   │   │   │   │   │   │   ├── g1 [G1]  → R,A1,B1,C1,D1,E1,F1,G1
+	//   │   │   │   │   │   │   └── g2 [G2]  → R,A1,B1,C1,D1,E1,F1,G2
+	//   │   │   │   │   │   └── f2 [F2]      → R,A1,B1,C1,D1,E1,F2
+	//   │   │   │   │   └── e2 [E2]          → R,A1,B1,C1,D1,E2
+	//   │   │   │   └── d2 [D2]              → R,A1,B1,C1,D2
+	//   │   │   └── c2 [C2]                  → R,A1,B1,C2
+	//   │   └── b2 [B2]                      → R,A1,B2
+	//   └── a2 [A2]                          → R,A2
+
+	r := NewRouter(testErrHandler, makeTrackingMiddleware("R"))
+
+	a1 := r.NewGroup("/a1", makeTrackingMiddleware("A1"))
+	a2 := r.NewGroup("/a2", makeTrackingMiddleware("A2"))
+
+	b1 := a1.NewGroup("/b1", makeTrackingMiddleware("B1"))
+	b2 := a1.NewGroup("/b2", makeTrackingMiddleware("B2"))
+
+	c1 := b1.NewGroup("/c1", makeTrackingMiddleware("C1"))
+	c2 := b1.NewGroup("/c2", makeTrackingMiddleware("C2"))
+
+	d1 := c1.NewGroup("/d1", makeTrackingMiddleware("D1"))
+	d2 := c1.NewGroup("/d2", makeTrackingMiddleware("D2"))
+
+	e1 := d1.NewGroup("/e1", makeTrackingMiddleware("E1"))
+	e2 := d1.NewGroup("/e2", makeTrackingMiddleware("E2"))
+
+	f1 := e1.NewGroup("/f1", makeTrackingMiddleware("F1"))
+	f2 := e1.NewGroup("/f2", makeTrackingMiddleware("F2"))
+
+	g1 := f1.NewGroup("/g1", makeTrackingMiddleware("G1"))
+	g2 := f1.NewGroup("/g2", makeTrackingMiddleware("G2"))
+
+	g1.GET("/test", makeTrackingHandler())
+	g2.GET("/test", makeTrackingHandler())
+	f2.GET("/test", makeTrackingHandler())
+	e2.GET("/test", makeTrackingHandler())
+	d2.GET("/test", makeTrackingHandler())
+	c2.GET("/test", makeTrackingHandler())
+	b2.GET("/test", makeTrackingHandler())
+	a2.GET("/test", makeTrackingHandler())
+
+	chain := func(labels ...string) string {
+		var s string
+		for _, l := range labels {
+			s += l + ":before\n"
+		}
+		s += "handler\n"
+		for i := len(labels) - 1; i >= 0; i-- {
+			s += labels[i] + ":after\n"
+		}
+		return s
+	}
+
+	t.Run("g1_full_chain", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/a1/b1/c1/d1/e1/f1/g1/test", nil)
+		r.ServeHTTP(rec, req)
+
+		assert.Equal(t, rec.Body.String(), chain("R", "A1", "B1", "C1", "D1", "E1", "F1", "G1"))
+	})
+
+	t.Run("g2_sibling_at_level_7", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/a1/b1/c1/d1/e1/f1/g2/test", nil)
+		r.ServeHTTP(rec, req)
+
+		assert.Equal(t, rec.Body.String(), chain("R", "A1", "B1", "C1", "D1", "E1", "F1", "G2"))
+	})
+
+	t.Run("f2_sibling_at_level_6", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/a1/b1/c1/d1/e1/f2/test", nil)
+		r.ServeHTTP(rec, req)
+
+		assert.Equal(t, rec.Body.String(), chain("R", "A1", "B1", "C1", "D1", "E1", "F2"))
+	})
+
+	t.Run("e2_sibling_at_level_5", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/a1/b1/c1/d1/e2/test", nil)
+		r.ServeHTTP(rec, req)
+
+		assert.Equal(t, rec.Body.String(), chain("R", "A1", "B1", "C1", "D1", "E2"))
+	})
+
+	t.Run("d2_sibling_at_level_4", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/a1/b1/c1/d2/test", nil)
+		r.ServeHTTP(rec, req)
+
+		assert.Equal(t, rec.Body.String(), chain("R", "A1", "B1", "C1", "D2"))
+	})
+
+	t.Run("c2_sibling_at_level_3", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/a1/b1/c2/test", nil)
+		r.ServeHTTP(rec, req)
+
+		assert.Equal(t, rec.Body.String(), chain("R", "A1", "B1", "C2"))
+	})
+
+	t.Run("b2_sibling_at_level_2", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/a1/b2/test", nil)
+		r.ServeHTTP(rec, req)
+
+		assert.Equal(t, rec.Body.String(), chain("R", "A1", "B2"))
+	})
+
+	t.Run("a2_sibling_at_level_1", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/a2/test", nil)
+		r.ServeHTTP(rec, req)
+
+		assert.Equal(t, rec.Body.String(), chain("R", "A2"))
+	})
+}
+
 func TestRootRouteExactMatch(t *testing.T) {
 	r := NewRouter(testErrHandler)
 	r.GET("/", func(w http.ResponseWriter, r *http.Request) error {

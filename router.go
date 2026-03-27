@@ -34,11 +34,15 @@ func (r *router) NewGroup(basePath string, middlewares ...Middleware) *router {
 		panic("httpx: basePath must not be empty")
 	}
 
+	mws := make([]Middleware, len(r.middlewares), len(r.middlewares)+len(middlewares))
+	copy(mws, r.middlewares)
+	mws = append(mws, middlewares...)
+
 	return &router{
 		mux:         r.mux,
 		errHandler:  r.errHandler,
 		basePath:    r.basePath + basePath,
-		middlewares: append(r.middlewares, middlewares...),
+		middlewares: mws,
 	}
 }
 
