@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"strings"
 
-	httpxutils "github.com/bobTheBuilder7/httpx/utils"
+	"github.com/bobTheBuilder7/httpx/httpxutils"
 )
 
 type ErrorHandlerFunc func(http.ResponseWriter, *http.Request) error
