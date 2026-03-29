@@ -1,6 +1,7 @@
 package httpx
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strings"
@@ -89,14 +90,14 @@ func (r *router) PATCH(route string, h ErrorHandlerFunc) {
 	r.mux.HandleFunc("PATCH "+normalizeRoute(r.basePath+route), r.errHandler(h))
 }
 
-func DELETE[In any, Out any](r *router, route string, f func(In) (Out, error)) {
+func DELETE[In any, Out any](r *router, route string, f func(context.Context, In) (Out, error)) {
 	r.DELETE(route, func(w http.ResponseWriter, r *http.Request) error {
 		var body In
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			return err
 		}
 
-		out, err := f(body)
+		out, err := f(r.Context(), body)
 		if err != nil {
 			return err
 		}
@@ -105,14 +106,14 @@ func DELETE[In any, Out any](r *router, route string, f func(In) (Out, error)) {
 	})
 }
 
-func POST[In any, Out any](r *router, route string, f func(In) (Out, error)) {
+func POST[In any, Out any](r *router, route string, f func(context.Context, In) (Out, error)) {
 	r.POST(route, func(w http.ResponseWriter, r *http.Request) error {
 		var body In
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			return err
 		}
 
-		out, err := f(body)
+		out, err := f(r.Context(), body)
 		if err != nil {
 			return err
 		}
@@ -121,14 +122,14 @@ func POST[In any, Out any](r *router, route string, f func(In) (Out, error)) {
 	})
 }
 
-func PUT[In any, Out any](r *router, route string, f func(In) (Out, error)) {
+func PUT[In any, Out any](r *router, route string, f func(context.Context, In) (Out, error)) {
 	r.PUT(route, func(w http.ResponseWriter, r *http.Request) error {
 		var body In
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			return err
 		}
 
-		out, err := f(body)
+		out, err := f(r.Context(), body)
 		if err != nil {
 			return err
 		}
@@ -137,14 +138,14 @@ func PUT[In any, Out any](r *router, route string, f func(In) (Out, error)) {
 	})
 }
 
-func PATCH[In any, Out any](r *router, route string, f func(In) (Out, error)) {
+func PATCH[In any, Out any](r *router, route string, f func(context.Context, In) (Out, error)) {
 	r.PATCH(route, func(w http.ResponseWriter, r *http.Request) error {
 		var body In
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			return err
 		}
 
-		out, err := f(body)
+		out, err := f(r.Context(), body)
 		if err != nil {
 			return err
 		}
