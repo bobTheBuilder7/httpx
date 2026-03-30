@@ -7,7 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/bobTheBuilder7/httpx/assert"
+	"github.com/bobTheBuilder7/assert"
 )
 
 func testErrHandler(h ErrorHandlerFunc) http.HandlerFunc {
